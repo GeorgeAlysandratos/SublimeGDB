@@ -914,7 +914,7 @@ class GDBThreadsView(GDBView):
                             if "value" in arg:
                                 args += " = " + arg["value"]
                     func = "%s(%s);" % (func, args)
-                print("thread %s" % thread)
+                #print("thread %s" % thread)
                 self.threads.append(GDBThread(int(thread["id"]), thread["state"], func, thread.get("details")))
 
         if "current-thread-id" in ids:
@@ -1306,7 +1306,7 @@ def wait_until_stopped():
                 i = i + 1
                 time.sleep(0.1)
             if i >= 100:
-                print("I'm confused... I think status is %s, but it seems it wasn't..." % gdb_run_status)
+                #print("I'm confused... I think status is %s, but it seems it wasn't..." % gdb_run_status)
                 return False
             return True
     return False
@@ -1320,8 +1320,8 @@ def resume():
 
 def get_result(line):
     res = result_regex.search(line).group(0)
-    if res == "error" and not get_setting("i_know_how_to_use_gdb_thank_you_very_much", False):
-        sublime.error_message("%s\n\n%s" % (line, "\n".join(traceback.format_stack())))
+    #if res == "error":
+    #    sublime.error_message("%s\n\n%s" % (line, "\n".join(traceback.format_stack())))
     return res
 
 
@@ -1343,7 +1343,7 @@ def update_cursor():
     res = run_cmd("-stack-info-frame", True)
     if get_result(res) == "error":
         if gdb_run_status != "running":
-            print("run_status is %s, but got error: %s" % (gdb_run_status, res))
+            #print("run_status is %s, but got error: %s" % (gdb_run_status, res))
             return
     currFrame = parse_result_line(res)["frame"]
     gdb_stack_index = int(currFrame["level"])
@@ -1621,12 +1621,17 @@ class GdbLaunch(sublime_plugin.WindowCommand):
         view = self.window.active_view()
         DEBUG = get_setting("debug", False, view)
         DEBUG_FILE = expand_path(get_setting("debug_file", "stdout", view), self.window)
-        if DEBUG:
-            print("Will write debug info to file: %s" % DEBUG_FILE)
+        #if DEBUG:
+            #print("Will write debug info to file: %s" % DEBUG_FILE)
         if (gdb_process is not None) and (gdb_process.poll() is None):
             sublime.status_message("GDB is already running! - Killing")
+            gdb_process.terminate()
             gdb_process.kill()
             gdb_process = None
+
+        for view in sublime.active_window().views():
+            if "GDB" in view.name():
+                view.close()
 
         commandline = get_setting("commandline", view=view)
         commandline = ' --interpreter=mi ' + commandline
@@ -1640,7 +1645,6 @@ class GdbLaunch(sublime_plugin.WindowCommand):
         if (loaded_folders == None) or ( len(loaded_folders) == 0):
             sublime.error_message("No loaded folders")
             sublime.run_command("new_window")
-            ResetSublimeWindow()
             return
 
         workingdir = loaded_folders[0] + '/'
@@ -1649,29 +1653,36 @@ class GdbLaunch(sublime_plugin.WindowCommand):
         if not os.path.exists(workingdir):
             sublime.error_message("The directory given does not exist: %s" % workingdir)
             sublime.run_command("new_window")
-            ResetSublimeWindow()
             return
 
         # get env settings
         gdb_env = get_setting("env", dict())
-       
-        # --------------------------------
+        if 'DISPLAY' not in gdb_env:
+            gdb_env['DISPLAY'] = ':100'
 
-        predebug_step = "make"
-        comm = "cd " + workingdir + " && " + predebug_step
-        print( comm )
-        print( subprocess.getstatusoutput( comm ) )
-        print('---- HERE -----')
+        env_copy = os.environ.copy()
+        env_copy.update(gdb_env)
 
         # --------------------------------
 
-        executable_name = "main"
+        predebug_command = get_setting("predebug_command", "")
+        print( subprocess.getstatusoutput( predebug_command ) )
+
+        # --------------------------------
+
+        executable_name = get_setting("executable_name", "")
+
+        if executable_name == '':
+            sublime.error_message("executable_name not set")
+            sublime.run_command("new_window")
+            return
+
         process_call = 'gdb ' + commandline + executable_name
 
         gdb_process = subprocess.Popen(process_call,
             shell=True,
             cwd=workingdir,
-            env=gdb_env,
+            env=env_copy,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
@@ -1680,7 +1691,7 @@ class GdbLaunch(sublime_plugin.WindowCommand):
         log_debug("Process: %s\n" % gdb_process)
 
         # Optionally Launch the GDB Server
-        '''
+        
         gdb_server_cmd = get_setting("server_commandline", "notset")
         gdb_server_dir = get_setting("server_workingdir", "notset")
         if (gdb_server_cmd != "notset") and (gdb_server_dir != "notset"):
@@ -1693,7 +1704,7 @@ class GdbLaunch(sublime_plugin.WindowCommand):
             log_debug("gdb_server_dir: %s" % gdb_server_shell)
             gdb_server_process = subprocess.Popen(gdb_server_cmd, shell=gdb_server_shell, cwd=gdb_server_dir, env=gdb_env)
 
-
+        '''
         gdb_process = subprocess.Popen(commandline, shell=True, cwd=path, env=gdb_env,
                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         '''
@@ -1706,8 +1717,8 @@ class GdbLaunch(sublime_plugin.WindowCommand):
         gdb_bkp_window.set_layout(
             {
                 "cols": [0.0, 1.0],
-                "rows": [0.0, 0.75, 1.0],
-                "cells": [[0, 0, 1, 1], [0, 1, 1, 2], [1, 1, 1, 2]]
+                "rows": [0.0, 0.7, 1.0],
+                "cells": [[0, 0, 1, 1], [0, 1, 1, 2]]
             }
         )
 
