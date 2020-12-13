@@ -196,13 +196,13 @@ class GDBView(object):
     def open(self):
         if self.view is None or self.view.window() is None:
             if self.settingsprefix is not None:
-                sublime.active_window().focus_group(get_setting("%s_group" % self.settingsprefix, 0))
+                sublime.active_window().focus_group(1)
             self.create_view()
 
     def close(self):
         if self.view is not None:
             if self.settingsprefix is not None:
-                sublime.active_window().focus_group(get_setting("%s_group" % self.settingsprefix, 0))
+                sublime.active_window().focus_group(1)
             self.destroy_view()
 
     def should_update(self):
@@ -1442,12 +1442,13 @@ def gdboutput(pipe):
 
 def cleanup():
     global __debug_file_handle
-    if get_setting("close_views", True):
-        for view in gdb_views:
-            view.close()
-    if get_setting("push_pop_layout", True):
-        gdb_bkp_window.set_layout(gdb_bkp_layout)
-        gdb_bkp_window.focus_view(gdb_bkp_view)
+
+    for view in gdb_views:
+        view.close()
+
+    gdb_bkp_window.set_layout(gdb_bkp_layout)
+    gdb_bkp_window.focus_view(gdb_bkp_view)
+
     if __debug_file_handle is not None:
         if __debug_file_handle != sys.stdout:
             __debug_file_handle.close()
@@ -1622,136 +1623,152 @@ class GdbLaunch(sublime_plugin.WindowCommand):
         DEBUG_FILE = expand_path(get_setting("debug_file", "stdout", view), self.window)
         if DEBUG:
             print("Will write debug info to file: %s" % DEBUG_FILE)
-        if gdb_process is None or gdb_process.poll() is not None:
-            commandline = get_setting("commandline", view=view)
-            if isinstance(commandline, list):
-                # backwards compatibility for when the commandline was a list
-                commandline = " ".join(commandline)
-            # note path expanding happens before add/switch view
-            commandline = expand_path(commandline, self.window)
-            path = expand_path(get_setting("workingdir", "/tmp", view), self.window)
-            arguments = expand_path(get_setting("arguments", ""), self.window)
-            log_debug("Running: %s\n" % commandline)
-            log_debug("In directory: %s\n" % path)
-            if commandline == "notset" or path == "notset":
-                sublime.error_message("You have not configured the plugin correctly, the default configuration file and your user configuration file will open in a new window")
-                sublime.run_command("new_window")
-                wnd = sublime.active_window()
-                wnd.set_layout({
-                    "cols": [0.0, 0.5, 1.0],
-                    "rows": [0, 1.0],
-                    "cells": [[0,0,1,1], [1,0,2,1]],
-                })
-                v = wnd.open_file("%s/User/SublimeGDB.sublime-settings" % sublime.packages_path())
-                v2 = wnd.open_file("%s/SublimeGDB/SublimeGDB.sublime-settings" % sublime.packages_path())
-                wnd.set_view_index(v2, 1, 0)
-                return
-            if not os.path.exists(path):
-                sublime.error_message("The directory given does not exist: %s" % path)
-                return
+        if (gdb_process is not None) and (gdb_process.poll() is None):
+            sublime.status_message("GDB is already running! - Killing")
+            gdb_process.kill()
+            gdb_process = None
 
-            # get env settings
-            gdb_env = get_setting("env", "notset")
-            if gdb_env == "notset":
-                gdb_env = None
-            else:
-                env_copy = os.environ.copy()
-                env_copy.update(gdb_env)
-                gdb_env = env_copy
+        commandline = get_setting("commandline", view=view)
+        commandline = ' --interpreter=mi ' + commandline
+        commandline = expand_path(commandline, self.window)
+        log_debug("Commandline : %s\n" % commandline)
 
-            # Optionally Launch the GDB Server
-            gdb_server_cmd = get_setting("server_commandline", "notset")
-            gdb_server_dir = get_setting("server_workingdir", "notset")
-            if (gdb_server_cmd != "notset") and (gdb_server_dir != "notset"):
+        arguments = expand_path(get_setting("arguments", ""), self.window)
+        log_debug("Program argv : %s\n" % arguments)
 
-                gdb_server_cmd = expand_path(gdb_server_cmd, self.window)
-                gdb_server_dir = expand_path(gdb_server_dir, self.window)
-                gdb_server_shell = get_setting("server_shell", False)
-                log_debug("gdb_server_cmd: %s" % gdb_server_cmd)
-                log_debug("gdb_server_dir: %s" % gdb_server_dir)
-                log_debug("gdb_server_dir: %s" % gdb_server_shell)
-                gdb_server_process = subprocess.Popen(gdb_server_cmd, shell=gdb_server_shell, cwd=gdb_server_dir, env=gdb_env)
+        loaded_folders = self.window.folders()
+        if (loaded_folders == None) or ( len(loaded_folders) == 0):
+            sublime.error_message("No loaded folders")
+            sublime.run_command("new_window")
+            ResetSublimeWindow()
+            return
+
+        workingdir = loaded_folders[0] + '/'
+        log_debug("In directory : %s\n" % workingdir)
+
+        if not os.path.exists(workingdir):
+            sublime.error_message("The directory given does not exist: %s" % workingdir)
+            sublime.run_command("new_window")
+            ResetSublimeWindow()
+            return
+
+        # get env settings
+        gdb_env = get_setting("env", dict())
+       
+        # --------------------------------
+
+        predebug_step = "make"
+        comm = "cd " + workingdir + " && " + predebug_step
+        print( comm )
+        print( subprocess.getstatusoutput( comm ) )
+        print('---- HERE -----')
+
+        # --------------------------------
+
+        executable_name = "main"
+        process_call = 'gdb ' + commandline + executable_name
+
+        gdb_process = subprocess.Popen(process_call,
+            shell=True,
+            cwd=workingdir,
+            env=gdb_env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+
+        log_debug("Process: %s\n" % gdb_process)
+
+        # Optionally Launch the GDB Server
+        '''
+        gdb_server_cmd = get_setting("server_commandline", "notset")
+        gdb_server_dir = get_setting("server_workingdir", "notset")
+        if (gdb_server_cmd != "notset") and (gdb_server_dir != "notset"):
+
+            gdb_server_cmd = expand_path(gdb_server_cmd, self.window)
+            gdb_server_dir = expand_path(gdb_server_dir, self.window)
+            gdb_server_shell = get_setting("server_shell", False)
+            log_debug("gdb_server_cmd: %s" % gdb_server_cmd)
+            log_debug("gdb_server_dir: %s" % gdb_server_dir)
+            log_debug("gdb_server_dir: %s" % gdb_server_shell)
+            gdb_server_process = subprocess.Popen(gdb_server_cmd, shell=gdb_server_shell, cwd=gdb_server_dir, env=gdb_env)
 
 
-            gdb_process = subprocess.Popen(commandline, shell=True, cwd=path, env=gdb_env,
-                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        gdb_process = subprocess.Popen(commandline, shell=True, cwd=path, env=gdb_env,
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        '''
 
-            log_debug("Process: %s\n" % gdb_process)
-            gdb_bkp_window = sublime.active_window()
-            #back up current layout before opening the debug one
-            #it will be restored when debug is finished
-            gdb_bkp_layout = gdb_bkp_window.get_layout()
-            gdb_bkp_view = gdb_bkp_window.active_view()
-            gdb_bkp_window.set_layout(
-                get_setting("layout",
-                    {
-                        "cols": [0.0, 0.5, 1.0],
-                        "rows": [0.0, 0.75, 1.0],
-                        "cells": [[0, 0, 2, 1], [0, 1, 1, 2], [1, 1, 2, 2]]
-                    }
-                )
-            )
+        gdb_bkp_window = sublime.active_window()
+        #back up current layout before opening the debug one
+        #it will be restored when debug is finished
+        gdb_bkp_layout = gdb_bkp_window.get_layout()
+        gdb_bkp_view = gdb_bkp_window.active_view()
+        gdb_bkp_window.set_layout(
+            {
+                "cols": [0.0, 1.0],
+                "rows": [0.0, 0.75, 1.0],
+                "cells": [[0, 0, 1, 1], [0, 1, 1, 2], [1, 1, 1, 2]]
+            }
+        )
 
-            for view in gdb_views:
-                if view.is_closed() and view.open_at_start():
-                    view.open()
-                view.clear()
+        for view in gdb_views:
+            if view.is_closed() and view.open_at_start():
+                view.open()
+            view.clear()
 
-            gdb_shutting_down = False
+        gdb_shutting_down = False
 
-            t = threading.Thread(target=gdboutput, args=(gdb_process.stdout,))
-            t.start()
-            t = threading.Thread(target=gdboutput, args=(gdb_process.stderr,))
-            t.start()
+        t = threading.Thread(target=gdboutput, args=(gdb_process.stdout,))
+        t.start()
+        t = threading.Thread(target=gdboutput, args=(gdb_process.stderr,))
+        t.start()
 
-            try:
-                raise Exception("Nope")
-                pty, tty = os.openpty()
-                name = os.ttyname(tty)
-            except:
-                pipe, name = tempfile.mkstemp()
-                pty, tty = pipe, None
-            log_debug("pty: %s, tty: %s, name: %s" % (pty, tty, name))
-            t = threading.Thread(target=programio, args=(pty,tty))
-            t.start()
-            try:
-                run_cmd("-gdb-show interpreter", True, timeout=get_setting("gdb_timeout", 20))
-            except:
-                sublime.error_message("""\
+        try:
+            raise Exception("Nope")
+            pty, tty = os.openpty()
+            name = os.ttyname(tty)
+        except:
+            pipe, name = tempfile.mkstemp()
+            pty, tty = pipe, None
+        log_debug("pty: %s, tty: %s, name: %s" % (pty, tty, name))
+        t = threading.Thread(target=programio, args=(pty,tty))
+        t.start()
+        try:
+            run_cmd("-gdb-show interpreter", True, timeout=get_setting("gdb_timeout", 20))
+        except:
+            sublime.error_message("""\
 It seems you're not running gdb with the "mi" interpreter. Please add
 "--interpreter=mi" to your gdb command line""")
-                gdb_process.stdin.write("quit\n")
-                return
-            run_cmd("-inferior-tty-set %s" % name, True)
+            gdb_process.stdin.write("quit\n")
+            return
+        run_cmd("-inferior-tty-set %s" % name, True)
 
-            run_cmd("-enable-pretty-printing")
-            run_cmd("-gdb-set target-async 1")
-            run_cmd("-gdb-set pagination off")
-            dis_asm_flavor = get_setting("disassembly_flavor", "att", view)
-            if dis_asm_flavor == "intel":
-                run_cmd("-gdb-set disassembly-flavor intel")
-            else:
-                run_cmd("-gdb-set disassembly-flavor att")
-            # if gdb_nonstop:
-            #     run_cmd("-gdb-set non-stop on")
-            attach_cmd = get_setting("attach_cmd","notset")
-            if(attach_cmd != "notset"):
-                run_cmd(attach_cmd)
-            gdb_breakpoint_view.sync_breakpoints()
-
-            if(get_setting("run_after_init", True)):
-                gdb_run_status = "running"
-                if arguments:
-                    run_cmd("-exec-arguments " + arguments)
-
-                run_cmd(get_setting("exec_cmd", "-exec-run"), True)
-            else:
-                gdb_run_status = "stopped"
-
-
-            show_input()
+        run_cmd("-enable-pretty-printing")
+        run_cmd("-gdb-set target-async 1")
+        run_cmd("-gdb-set pagination off")
+        dis_asm_flavor = get_setting("disassembly_flavor", "att", view)
+        if dis_asm_flavor == "intel":
+            run_cmd("-gdb-set disassembly-flavor intel")
         else:
-            sublime.status_message("GDB is already running!")
+            run_cmd("-gdb-set disassembly-flavor att")
+        # if gdb_nonstop:
+        #     run_cmd("-gdb-set non-stop on")
+        attach_cmd = get_setting("attach_cmd","notset")
+        if(attach_cmd != "notset"):
+            run_cmd(attach_cmd)
+        gdb_breakpoint_view.sync_breakpoints()
+
+        if(get_setting("run_after_init", True)):
+            gdb_run_status = "running"
+            if arguments:
+                run_cmd("-exec-arguments " + arguments)
+
+            run_cmd(get_setting("exec_cmd", "-exec-run"), True)
+        else:
+            gdb_run_status = "stopped"
+
+
+        show_input()
 
     def is_enabled(self):
         return not is_running()
