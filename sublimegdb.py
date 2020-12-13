@@ -2039,7 +2039,7 @@ class GdbEventListener(sublime_plugin.EventListener):
             #word_location_tuple = view.word(point)
             #hovered_word = view.substr(word_location_tuple)
             #print( hovered_word )
-        pass
+            pass
 
     def on_activated(self, view):
         if view.file_name() is not None:
