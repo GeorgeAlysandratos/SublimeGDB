@@ -2031,6 +2031,16 @@ class GdbEventListener(sublime_plugin.EventListener):
                 return (view.id() == v.get_view().id()) == operand
         return None
 
+    def on_hover(call, view, point, hover_zone):
+        if hover_zone == sublime.HOVER_TEXT:
+            #print(point)
+            #print(hover_zone)
+            #print('---- on_hover ----', call, view, point, hover_zone)
+            #word_location_tuple = view.word(point)
+            #hovered_word = view.substr(word_location_tuple)
+            #print( hovered_word )
+        pass
+
     def on_activated(self, view):
         if view.file_name() is not None:
             update_view_markers(view)
